@@ -88,3 +88,36 @@ class TestContextExpansion(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestWeightedRetrieval(unittest.TestCase):
+    def test_specific_terms_receive_higher_weight(self):
+        from contextguard.context import RepositoryFile
+        from contextguard.retrieval import retrieve_context
+
+        files = [
+            RepositoryFile(
+                path="a.py",
+                content="def process(value):\n    return value\n    value = value.strip()\n    print(value)",
+            ),
+            RepositoryFile(
+                path="b.py",
+                content="def validate_token(token):\n    return token",
+            ),
+        ]
+
+        results = retrieve_context("value token", files, top_k=10)
+
+        self.assertGreaterEqual(len(results), 1)
+        token_result = next(
+            result for result in results
+            if "token" in result.content
+        )
+        value_result = next(
+            result for result in results
+            if "value" in result.content
+        )
+        self.assertGreater(
+            token_result.relevance_score,
+            value_result.relevance_score,
+        )

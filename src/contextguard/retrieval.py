@@ -1,6 +1,8 @@
 """Local lexical retrieval of relevant repository snippets."""
 
+import math
 import re
+from collections import Counter
 
 from contextguard.context import ContextSnippet, RepositoryFile
 
@@ -15,7 +17,7 @@ STOP_WORDS = {
 
 
 def tokenize(text: str) -> set[str]:
-    """Extract lowercase, meaningful identifier and word tokens."""
+    """Extract lowercase words and identifiers, preserving term frequency."""
     return {
         token.lower()
         for token in TOKEN_PATTERN.findall(text)
@@ -28,7 +30,7 @@ def retrieve_context(
     files: list[RepositoryFile],
     top_k: int = 5,
 ) -> list[ContextSnippet]:
-    """Return the highest-overlap source snippets for a query."""
+    """Rank source lines using local inverse-document-frequency weighting."""
     if top_k < 1:
         raise ValueError("top_k must be at least 1")
 
@@ -36,28 +38,56 @@ def retrieve_context(
     if not query_tokens:
         return []
 
+    lines_by_file = [
+        (file.path, file.content.splitlines())
+        for file in files
+    ]
+
+    all_lines = [
+        (path, index + 1, line)
+        for path, lines in lines_by_file
+        for index, line in enumerate(lines)
+        if line.strip()
+    ]
+
+    if not all_lines:
+        return []
+
+    document_tokens = [set(tokenize(line)) for _, _, line in all_lines]
+    document_frequency = Counter()
+    for tokens in document_tokens:
+        document_frequency.update(tokens)
+
+    total_lines = len(all_lines)
+    query_weights = {
+        token: math.log((total_lines + 1) / (document_frequency[token] + 1)) + 1
+        for token in set(query_tokens)
+    }
+    query_weight_total = sum(query_weights.values())
+
     snippets: list[ContextSnippet] = []
 
-    for file in files:
-        lines = file.content.splitlines()
+    for (path, line_number, line), tokens in zip(all_lines, document_tokens):
+        line_counts = Counter(tokens)
+        matched = set(query_weights) & set(line_counts)
 
-        for index, line in enumerate(lines):
-            line_tokens = tokenize(line)
-            overlap = query_tokens & line_tokens
+        if not matched:
+            continue
 
-            if not overlap:
-                continue
+        score = sum(
+            query_weights[token] * (1 + math.log(line_counts[token]))
+            for token in matched
+        ) / query_weight_total
 
-            score = len(overlap) / len(query_tokens)
-            snippets.append(
-                ContextSnippet(
-                    file_path=file.path,
-                    content=line,
-                    start_line=index + 1,
-                    end_line=index + 1,
-                    relevance_score=score,
-                )
+        snippets.append(
+            ContextSnippet(
+                file_path=path,
+                content=line,
+                start_line=line_number,
+                end_line=line_number,
+                relevance_score=score,
             )
+        )
 
     snippets.sort(
         key=lambda snippet: (
