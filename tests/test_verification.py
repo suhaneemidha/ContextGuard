@@ -44,3 +44,48 @@ class TestVerificationResult(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestStructuredVerificationEvidence(unittest.TestCase):
+    def test_stores_structured_evidence_references(self):
+        from contextguard.evidence import EvidenceReference
+
+        finding = ReviewFinding(
+            title="Missing authorization check",
+            description="The endpoint may allow unauthorized access.",
+            file_path="src/auth.py",
+        )
+        evidence = EvidenceReference(
+            file_path="src/auth.py",
+            start_line=12,
+            end_line=12,
+            excerpt="return user_data",
+            explanation="The data is returned without an authorization check.",
+        )
+        result = VerificationResult(
+            finding=finding,
+            status=FindingStatus.UNCERTAIN,
+            reason="Needs further verification.",
+            evidence_references=[evidence],
+        )
+
+        self.assertEqual(len(result.evidence_references), 1)
+        self.assertEqual(
+            result.evidence_references[0].file_path,
+            "src/auth.py",
+        )
+        self.assertFalse(result.is_actionable())
+
+    def test_structured_evidence_defaults_to_empty_list(self):
+        finding = ReviewFinding(
+            title="Potential issue",
+            description="Needs review.",
+            file_path="src/app.py",
+        )
+        result = VerificationResult(
+            finding=finding,
+            status=FindingStatus.UNCERTAIN,
+            reason="Not enough evidence.",
+        )
+
+        self.assertEqual(result.evidence_references, [])

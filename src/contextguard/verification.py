@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 
+from contextguard.evidence import EvidenceReference
 from contextguard.schemas import FindingStatus, ReviewFinding
 
 
@@ -13,6 +14,7 @@ class VerificationResult:
     status: FindingStatus
     reason: str
     evidence: list[str] = field(default_factory=list)
+    evidence_references: list[EvidenceReference] = field(default_factory=list)
 
     def is_actionable(self) -> bool:
         """Return whether the finding should be presented as confirmed."""
