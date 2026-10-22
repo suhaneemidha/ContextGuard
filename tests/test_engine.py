@@ -40,3 +40,40 @@ class TestVerificationEngine(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestStructuredEvidenceVerification(unittest.TestCase):
+    def test_keeps_high_confidence_finding_with_structured_evidence(self):
+        from contextguard.evidence import EvidenceReference
+
+        finding = TestVerificationEngine().make_finding(0.9)
+        reference = EvidenceReference(
+            file_path="src/auth.py",
+            start_line=12,
+            end_line=12,
+            excerpt="return user_data",
+            explanation="The data is returned without an authorization check.",
+        )
+
+        result = verify_finding(finding, evidence_references=[reference])
+
+        self.assertEqual(result.status, FindingStatus.KEEP)
+        self.assertEqual(result.evidence_references, [reference])
+        self.assertTrue(result.is_actionable())
+
+    def test_low_confidence_with_structured_evidence_remains_uncertain(self):
+        from contextguard.evidence import EvidenceReference
+
+        finding = TestVerificationEngine().make_finding(0.4)
+        reference = EvidenceReference(
+            file_path="src/auth.py",
+            start_line=12,
+            end_line=12,
+            excerpt="return user_data",
+            explanation="The data is returned without an authorization check.",
+        )
+
+        result = verify_finding(finding, evidence_references=[reference])
+
+        self.assertEqual(result.status, FindingStatus.UNCERTAIN)
+        self.assertEqual(result.evidence_references, [reference])
