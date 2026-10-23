@@ -29,9 +29,17 @@ Rules:
 3. Use "keep" only when the supplied source supports the reported issue.
 4. Use "filter" when the supplied source contradicts the reported issue.
 5. Use "uncertain" when the evidence is insufficient or ambiguous.
-6. Cite exact source excerpts and line ranges for every supporting claim.
-7. If the context does not contain enough evidence, return an empty
-   evidence_references array and choose "uncertain".
+6. Cite only source code that is actually present in the supplied context.
+7. Copy every evidence excerpt verbatim from the source, preserving indentation,
+   punctuation, and blank lines.
+8. The start_line and end_line must exactly match the excerpt's first and last
+   source lines. Never cite a wider range than the excerpt contains.
+9. Prefer the smallest contiguous source range needed to support the claim.
+   For a single-line excerpt, start_line and end_line must be identical.
+10. Never combine non-contiguous lines into one excerpt. If exact source text
+    or line boundaries are uncertain, return no evidence references.
+11. If the context does not contain enough evidence, return an empty
+    evidence_references array and choose "uncertain".
 
 Candidate finding:
 Title: {finding.title}

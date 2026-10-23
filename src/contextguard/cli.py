@@ -140,6 +140,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--model",
         help="Groq model name (defaults to GROQ_MODEL or the configured default)",
     )
+    review_parser.add_argument(
+        "--debug-response",
+        action="store_true",
+        help="Print raw model JSON to stderr for troubleshooting",
+    )
     _add_context_arguments(review_parser)
     _add_finding_arguments(review_parser)
 
@@ -174,6 +179,9 @@ def main(argv: list[str] | None = None) -> int:
                     request.prompt,
                     model=args.model,
                 )
+                if args.debug_response:
+                    print("Raw Groq response:", file=sys.stderr)
+                    print(raw_response, file=sys.stderr)
             else:
                 response_path = Path(args.response_file)
                 raw_response = response_path.read_text(encoding="utf-8")
