@@ -19,7 +19,7 @@ SOURCE_SUFFIXES = {
 
 RISKY_OPERATION = re.compile(
     r"\b(open|exec|eval|compile|read_text|write_text|"
-    r"subprocess|execute|fetch|requests|resolve|unlink)\b",
+    r"subprocess|execute|fetch|requests|unlink)\b",
     re.IGNORECASE,
 )
 
@@ -245,13 +245,27 @@ def build_scan_context(
         top_k=total_nonblank_lines,
     )
 
-    # Preserve retrieval ranking while selecting at most one seed per file.
+    # Preserve file ranking, but choose a representative implementation line
+    # instead of an import or other high-scoring line outside a function.
     selected: list[ContextSnippet] = []
     selected_paths: set[str] = set()
+    files_by_path = {file.path: file for file in files}
 
     for candidate in candidates:
         if candidate.file_path in selected_paths:
             continue
+
+        source_file = files_by_path[candidate.file_path]
+        representative = _fallback_snippet(source_file)
+
+        if representative is not None:
+            candidate = ContextSnippet(
+                file_path=representative.file_path,
+                content=representative.content,
+                start_line=representative.start_line,
+                end_line=representative.end_line,
+                relevance_score=candidate.relevance_score,
+            )
 
         selected.append(candidate)
         selected_paths.add(candidate.file_path)

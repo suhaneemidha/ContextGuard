@@ -1,0 +1,119 @@
+{
+  "benchmark": "ContextGuard controlled scan fixtures",
+  "cases_run": 4,
+  "cases_passed": 4,
+  "cases_failed": 0,
+  "results": [
+    {
+      "case": "path_traversal",
+      "expected_vulnerability": true,
+      "passed": true,
+      "findings_returned": 1,
+      "actionable_findings": 1,
+      "uncertain_findings": 0,
+      "expected_issue_detected": true,
+      "unexpected_actionable_findings": [],
+      "findings": [
+        {
+          "title": "Path traversal vulnerability in read_user_file",
+          "description": "The function allows a caller to specify arbitrary filenames, which can be used to read files outside the intended directory (e.g., by including \"../\"), because the input is not sanitized. This can expose sensitive data.",
+          "file_path": "file_service.py",
+          "line_number": 7,
+          "confidence": 0.9,
+          "status": "keep",
+          "actionable": true,
+          "reason": "Confidence threshold met and supporting evidence provided.",
+          "evidence_references": [
+            {
+              "file_path": "file_service.py",
+              "start_line": 7,
+              "end_line": 8,
+              "excerpt": "    path = DATA_DIR / filename\n    return path.read_text()",
+              "explanation": "User input is concatenated to the base directory without validation, permitting directory traversal."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case": "command_injection",
+      "expected_vulnerability": true,
+      "passed": true,
+      "findings_returned": 1,
+      "actionable_findings": 1,
+      "uncertain_findings": 0,
+      "expected_issue_detected": true,
+      "unexpected_actionable_findings": [],
+      "findings": [
+        {
+          "title": "Command injection vulnerability in log_search",
+          "description": "The function concatenates user input into a shell command and executes it with shell=True, allowing an attacker to inject arbitrary shell commands.",
+          "file_path": "log_search.py",
+          "line_number": 5,
+          "confidence": 0.95,
+          "status": "keep",
+          "actionable": true,
+          "reason": "Confidence threshold met and supporting evidence provided.",
+          "evidence_references": [
+            {
+              "file_path": "log_search.py",
+              "start_line": 5,
+              "end_line": 5,
+              "excerpt": "command = \"grep \" + query + \" /var/log/app.log\"",
+              "explanation": "User-provided query is directly concatenated into a shell command string, exposing command injection risk."
+            },
+            {
+              "file_path": "log_search.py",
+              "start_line": 6,
+              "end_line": 6,
+              "excerpt": "return subprocess.check_output(command, shell=True, text=True)",
+              "explanation": "Using subprocess.check_output with shell=True executes the command string in a shell, which interprets metacharacters and allows injection."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case": "unsafe_deserialization",
+      "expected_vulnerability": true,
+      "passed": true,
+      "findings_returned": 1,
+      "actionable_findings": 1,
+      "uncertain_findings": 0,
+      "expected_issue_detected": true,
+      "unexpected_actionable_findings": [],
+      "findings": [
+        {
+          "title": "Insecure deserialization using pickle on untrusted data",
+          "description": "The function deserializes data received from an untrusted client using pickle.loads, which can execute arbitrary code and leads to severe security vulnerabilities.",
+          "file_path": "session_loader.py",
+          "line_number": 5,
+          "confidence": 1.0,
+          "status": "keep",
+          "actionable": true,
+          "reason": "Confidence threshold met and supporting evidence provided.",
+          "evidence_references": [
+            {
+              "file_path": "session_loader.py",
+              "start_line": 5,
+              "end_line": 5,
+              "excerpt": "    return pickle.loads(untrusted_data)",
+              "explanation": "Deserializing untrusted data with pickle can execute arbitrary code, exposing the system to remote code execution attacks."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case": "safe_control",
+      "expected_vulnerability": false,
+      "passed": true,
+      "findings_returned": 0,
+      "actionable_findings": 0,
+      "uncertain_findings": 0,
+      "expected_issue_detected": false,
+      "unexpected_actionable_findings": [],
+      "findings": []
+    }
+  ]
+}

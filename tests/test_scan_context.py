@@ -84,6 +84,32 @@ class TestScanContext(unittest.TestCase):
         self.assertIn("user = load_user()", result.text)
         self.assertIn("return user", result.text)
 
+    def test_safe_path_resolution_does_not_hide_validation_logic(self):
+        (self.root / "safe_paths.py").write_text(
+            "from pathlib import Path\n"
+            "DATA_DIR = Path('/tmp/data').resolve()\n"
+            "def read_user_file(filename: str) -> str:\n"
+            "    path = (DATA_DIR / filename).resolve()\n"
+            "    if not path.is_relative_to(DATA_DIR):\n"
+            "        raise ValueError('path escapes data directory')\n"
+            "    return path.read_text()\n",
+            encoding="utf-8",
+        )
+
+        result = build_scan_context(
+            self.root,
+            query="resolve path validation",
+            top_k=10,
+            window=0,
+        )
+
+        safe_context = next(
+            section for section in result.text.split("\n\n")
+            if section.startswith("[safe_paths.py:")
+        )
+        self.assertIn("path.is_relative_to(DATA_DIR)", safe_context)
+        self.assertIn("path.read_text()", safe_context)
+
     def test_empty_query_returns_empty_context(self):
         result = build_scan_context(self.root, query="")
         self.assertEqual(result.text, "")
