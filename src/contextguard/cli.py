@@ -5,6 +5,7 @@ import json
 import sys
 from pathlib import Path
 
+from contextguard.repository_source import open_repository
 from contextguard.review_workflow import (
     prepare_review_request,
     process_review_response,
@@ -20,7 +21,11 @@ def _add_finding_arguments(parser: argparse.ArgumentParser) -> None:
         required=True,
         help="Description of the suspected issue",
     )
-    parser.add_argument("--file", required=True, help="Repository-relative file path")
+    parser.add_argument(
+        "--file",
+        required=True,
+        help="Repository-relative file path",
+    )
     parser.add_argument(
         "--line",
         type=int,
@@ -67,7 +72,7 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_parser.add_argument(
         "--repository",
         required=True,
-        help="Path to the repository being reviewed",
+        help="Local repository path or public HTTPS GitHub URL",
     )
     prepare_parser.add_argument("--query", help="Optional context-retrieval query")
     prepare_parser.add_argument("--top-k", type=int, default=5)
@@ -82,7 +87,7 @@ def build_parser() -> argparse.ArgumentParser:
     verify_parser.add_argument(
         "--repository",
         required=True,
-        help="Path to the repository being reviewed",
+        help="Local repository path or public HTTPS GitHub URL",
     )
     verify_parser.add_argument(
         "--response-file",
@@ -102,50 +107,51 @@ def main(argv: list[str] | None = None) -> int:
     try:
         finding = _make_finding(args)
 
-        if args.command == "prepare":
-            request = prepare_review_request(
-                repository_root=args.repository,
+        with open_repository(args.repository) as repository_root:
+            if args.command == "prepare":
+                request = prepare_review_request(
+                    repository_root=repository_root,
+                    finding=finding,
+                    query=args.query,
+                    top_k=args.top_k,
+                    window=args.window,
+                    max_characters=args.max_characters,
+                )
+                print(request.prompt)
+                return 0
+
+            response_path = Path(args.response_file)
+            raw_response = response_path.read_text(encoding="utf-8")
+            result = process_review_response(
+                repository_root=repository_root,
                 finding=finding,
-                query=args.query,
-                top_k=args.top_k,
-                window=args.window,
-                max_characters=args.max_characters,
+                raw_response=raw_response,
             )
-            print(request.prompt)
+
+            output = {
+                "status": result.status.value,
+                "actionable": result.is_actionable(),
+                "reason": result.reason,
+                "finding": {
+                    "title": result.finding.title,
+                    "file_path": result.finding.file_path,
+                    "confidence": result.finding.confidence,
+                },
+                "evidence_references": [
+                    {
+                        "file_path": reference.file_path,
+                        "start_line": reference.start_line,
+                        "end_line": reference.end_line,
+                        "excerpt": reference.excerpt,
+                        "explanation": reference.explanation,
+                    }
+                    for reference in result.evidence_references
+                ],
+            }
+            print(json.dumps(output, indent=2))
             return 0
 
-        response_path = Path(args.response_file)
-        raw_response = response_path.read_text(encoding="utf-8")
-        result = process_review_response(
-            repository_root=args.repository,
-            finding=finding,
-            raw_response=raw_response,
-        )
-
-        output = {
-            "status": result.status.value,
-            "actionable": result.is_actionable(),
-            "reason": result.reason,
-            "finding": {
-                "title": result.finding.title,
-                "file_path": result.finding.file_path,
-                "confidence": result.finding.confidence,
-            },
-            "evidence_references": [
-                {
-                    "file_path": reference.file_path,
-                    "start_line": reference.start_line,
-                    "end_line": reference.end_line,
-                    "excerpt": reference.excerpt,
-                    "explanation": reference.explanation,
-                }
-                for reference in result.evidence_references
-            ],
-        }
-        print(json.dumps(output, indent=2))
-        return 0
-
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RuntimeError) as exc:
         print(f"contextguard: {exc}", file=sys.stderr)
         return 2
 
