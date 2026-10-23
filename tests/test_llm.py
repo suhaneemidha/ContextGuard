@@ -36,7 +36,9 @@ class TestGroqReviewProvider(unittest.TestCase):
         client.chat.completions.create.assert_called_once()
         kwargs = client.chat.completions.create.call_args.kwargs
         self.assertEqual(kwargs["model"], "test-model")
-        self.assertEqual(kwargs["response_format"], {"type": "json_object"})
+        self.assertEqual(kwargs["response_format"]["type"], "json_schema")
+        self.assertTrue(kwargs["response_format"]["json_schema"]["strict"])
+        self.assertIn("evidence_references", kwargs["response_format"]["json_schema"]["schema"]["required"])
 
     def test_uses_default_model_when_not_configured(self):
         with patch("contextguard.llm.load_dotenv"):
