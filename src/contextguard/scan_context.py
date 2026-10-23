@@ -150,7 +150,7 @@ def _expand_to_code_block(
     files: list[RepositoryFile],
     window: int,
 ) -> ContextSnippet:
-    """Prefer a complete enclosing Python function over a small line window."""
+    """Include a complete code block and relevant module-level dependencies."""
     if file.path.lower().endswith(".py"):
         try:
             tree = ast.parse(file.content)
@@ -167,30 +167,121 @@ def _expand_to_code_block(
                 ):
                     continue
 
-                start = min(
+                start_line = min(
                     [node.lineno]
                     + [
                         decorator.lineno
                         for decorator in getattr(node, "decorator_list", [])
                     ]
                 )
-                end = getattr(node, "end_lineno", node.lineno)
+                end_line = getattr(node, "end_lineno", node.lineno)
 
-                if start <= snippet.start_line <= end:
-                    enclosing.append((end - start, start, end))
+                if start_line <= snippet.start_line <= end_line:
+                    enclosing.append(
+                        (end_line - start_line, start_line, end_line, node)
+                    )
 
             if enclosing:
-                _, start, end = min(enclosing)
-                content = "\n".join(lines[start - 1:end])
+                _, start_line, end_line, target_node = min(
+                    enclosing, key=lambda item: item[:3]
+                )
 
-                # Avoid allowing one unusually large function to consume the
-                # entire prompt budget; use the normal local window instead.
+                referenced_names = {
+                    node.id
+                    for node in ast.walk(target_node)
+                    if isinstance(node, ast.Name)
+                    and isinstance(node.ctx, ast.Load)
+                }
+
+                module_dependencies = []
+                for statement in tree.body:
+                    defined_names = set()
+
+                    if isinstance(
+                        statement, (ast.Assign, ast.AnnAssign, ast.AugAssign)
+                    ):
+                        targets = (
+                            statement.targets
+                            if isinstance(statement, ast.Assign)
+                            else [statement.target]
+                        )
+                        defined_names.update(
+                            target.id
+                            for target in targets
+                            for target in ast.walk(target)
+                            if isinstance(target, ast.Name)
+                        )
+                    elif isinstance(statement, ast.Import):
+                        defined_names.update(
+                            alias.asname or alias.name.split(".")[0]
+                            for alias in statement.names
+                        )
+                    elif isinstance(statement, ast.ImportFrom):
+                        defined_names.update(
+                            alias.asname or alias.name
+                            for alias in statement.names
+                        )
+                    else:
+                        continue
+
+                    loaded_names = {
+                        node.id
+                        for node in ast.walk(statement)
+                        if isinstance(node, ast.Name)
+                        and isinstance(node.ctx, ast.Load)
+                    }
+                    module_dependencies.append(
+                        (
+                            statement,
+                            defined_names,
+                            loaded_names,
+                        )
+                    )
+
+                dependency_spans = []
+                included_statements = set()
+                changed = True
+
+                while changed:
+                    changed = False
+                    for statement, defined_names, loaded_names in module_dependencies:
+                        if (
+                            statement.lineno in included_statements
+                            or not defined_names.intersection(referenced_names)
+                        ):
+                            continue
+
+                        included_statements.add(statement.lineno)
+                        dependency_spans.append(
+                            (
+                                statement.lineno,
+                                getattr(statement, "end_lineno", statement.lineno),
+                            )
+                        )
+                        previous_count = len(referenced_names)
+                        referenced_names.update(loaded_names)
+                        if len(referenced_names) > previous_count:
+                            changed = True
+
+                if dependency_spans:
+                    start_line = min(
+                        [start_line]
+                        + [span[0] for span in dependency_spans]
+                    )
+                    end_line = max(
+                        [end_line]
+                        + [span[1] for span in dependency_spans]
+                    )
+
+                content = "\n".join(lines[start_line - 1:end_line])
+
+                # Keep context bounded even when dependencies are far apart.
                 if len(content) <= 5000:
                     return ContextSnippet(
                         file_path=file.path,
                         content=content,
-                        start_line=start,
-                        end_line=end,
+                        start_line=start_line,
+                        end_line=end_line,
                         relevance_score=snippet.relevance_score,
                     )
 

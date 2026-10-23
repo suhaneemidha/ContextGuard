@@ -108,7 +108,31 @@ class TestScanContext(unittest.TestCase):
             if section.startswith("[safe_paths.py:")
         )
         self.assertIn("path.is_relative_to(DATA_DIR)", safe_context)
+        self.assertIn("from pathlib import Path", safe_context)
         self.assertIn("path.read_text()", safe_context)
+
+    def test_scan_context_includes_module_level_constants(self):
+        (self.root / "query_engine.py").write_text(
+            "ROW_CAP = 5000\n"
+            "def execute_sql(query):\n"
+            "    df = run_query(query)\n"
+            "    truncated = False\n"
+            "    if ROW_CAP is not None and len(df) > ROW_CAP:\n"
+            "        truncated = True\n"
+            "        df = df.head(ROW_CAP)\n"
+            "    return df, truncated\n",
+            encoding="utf-8",
+        )
+
+        result = build_scan_context(
+            self.root,
+            query="execute_sql ROW_CAP result rows",
+            top_k=1,
+            window=0,
+        )
+
+        self.assertIn("ROW_CAP = 5000", result.text)
+        self.assertIn("def execute_sql(query):", result.text)
 
     def test_empty_query_returns_empty_context(self):
         result = build_scan_context(self.root, query="")
