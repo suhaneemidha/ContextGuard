@@ -14,6 +14,7 @@ from contextguard.review_workflow import (
     prepare_review_request,
     process_review_response,
 )
+from contextguard.scan_context import build_scan_context
 from contextguard.scan_prompt import build_scan_prompt
 from contextguard.scan_response import parse_scan_response
 from contextguard.schemas import ReviewFinding
@@ -185,7 +186,7 @@ def _run_scan(args: argparse.Namespace, repository_root: Path) -> int:
     if not 0.0 <= args.confidence_threshold <= 1.0:
         raise ValueError("--confidence-threshold must be between 0.0 and 1.0")
 
-    context = build_review_context(
+    context = build_scan_context(
         repository_root=repository_root,
         query=args.query or DEFAULT_SCAN_QUERY,
         top_k=args.top_k,

@@ -145,6 +145,45 @@ class TestGroqScanProvider(unittest.TestCase):
         self.assertIn("title", finding_schema["required"])
         self.assertIn("evidence_references", finding_schema["required"])
 
+    def test_scan_falls_back_after_schema_validation_error(self):
+        class SchemaValidationError(Exception):
+            code = "json_validate_failed"
+
+        response_text = '{"findings": []}'
+        fake_response = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content=response_text)
+                )
+            ]
+        )
+
+        with patch("contextguard.llm.load_dotenv"):
+            with patch("contextguard.llm.Groq") as mock_groq:
+                client = mock_groq.return_value
+                client.chat.completions.create.side_effect = [
+                    SchemaValidationError("schema validation failed"),
+                    fake_response,
+                ]
+
+                result = generate_scan_response(
+                    "Scan this repository.",
+                    api_key="test-key",
+                    model="test-model",
+                )
+
+        self.assertEqual(result, response_text)
+        calls = client.chat.completions.create.call_args_list
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(
+            calls[0].kwargs["response_format"]["type"],
+            "json_schema",
+        )
+        self.assertEqual(
+            calls[1].kwargs["response_format"],
+            {"type": "json_object"},
+        )
+
     def test_scan_rejects_empty_prompt(self):
         with self.assertRaisesRegex(ValueError, "prompt must not be empty"):
             generate_scan_response(" ", api_key="test-key")
