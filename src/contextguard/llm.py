@@ -149,6 +149,8 @@ def _generate_structured_response(
                     "schema": schema,
                 },
             },
+            reasoning_effort="low",
+            reasoning_format="hidden",
             max_completion_tokens=2048,
         )
     except Exception as exc:
@@ -162,6 +164,8 @@ def _generate_structured_response(
                 model=resolved_model,
                 messages=messages,
                 response_format={"type": "json_object"},
+                reasoning_effort="low",
+                reasoning_format="hidden",
                 max_completion_tokens=2048,
             )
         except Exception as fallback_exc:
