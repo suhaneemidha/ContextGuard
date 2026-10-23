@@ -14,11 +14,23 @@ class AssembledContext:
     character_count: int
 
 
+def _format_numbered_source(snippet: ContextSnippet) -> str:
+    """Display absolute line numbers without altering the underlying source."""
+    lines = snippet.content.splitlines()
+    return "\n".join(
+        f"{line_number:>5} | {line}"
+        for line_number, line in enumerate(
+            lines,
+            start=snippet.start_line,
+        )
+    )
+
+
 def assemble_context(
     snippets: list[ContextSnippet],
     max_characters: int = 8000,
 ) -> AssembledContext:
-    """Combine unique snippets in rank order within a character budget."""
+    """Combine unique numbered snippets in rank order within a character budget."""
     if max_characters < 1:
         raise ValueError("max_characters must be at least 1")
 
@@ -42,7 +54,7 @@ def assemble_context(
             f"{snippet.file_path}:"
             f"{snippet.start_line}-{snippet.end_line}"
         )
-        section = f"[{source}]\n{snippet.content}"
+        section = f"[{source}]\n{_format_numbered_source(snippet)}"
         separator = "\n\n" if sections else ""
         addition = separator + section
 

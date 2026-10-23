@@ -23,12 +23,26 @@ class TestContextBuilder(unittest.TestCase):
             ),
         ]
 
-    def test_assembles_context_with_source_references(self):
+    def test_assembles_context_with_source_references_and_line_numbers(self):
         result = assemble_context(self.snippets)
         self.assertIn("[src/app.py:10-10]", result.text)
+        self.assertIn("   10 | def validate(value):", result.text)
         self.assertIn("[src/db.py:25-25]", result.text)
+        self.assertIn("   25 | return connection", result.text)
         self.assertEqual(len(result.sources), 2)
         self.assertEqual(result.character_count, len(result.text))
+
+    def test_numbers_each_line_using_absolute_source_lines(self):
+        snippet = ContextSnippet(
+            file_path="src/app.py",
+            content="first line\n    second line\nthird line",
+            start_line=7,
+            end_line=9,
+        )
+        result = assemble_context([snippet])
+        self.assertIn("    7 | first line", result.text)
+        self.assertIn("    8 |     second line", result.text)
+        self.assertIn("    9 | third line", result.text)
 
     def test_removes_duplicate_snippets(self):
         result = assemble_context([self.snippets[0], self.snippets[0]])
@@ -36,8 +50,8 @@ class TestContextBuilder(unittest.TestCase):
         self.assertEqual(result.text.count("def validate(value):"), 1)
 
     def test_respects_character_budget(self):
-        result = assemble_context(self.snippets, max_characters=45)
-        self.assertLessEqual(result.character_count, 45)
+        result = assemble_context(self.snippets, max_characters=50)
+        self.assertLessEqual(result.character_count, 50)
         self.assertEqual(len(result.sources), 1)
 
     def test_invalid_character_budget_raises_error(self):
