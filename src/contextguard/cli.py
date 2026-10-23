@@ -5,6 +5,7 @@ import json
 import sys
 from pathlib import Path
 
+from contextguard.llm import generate_review_response
 from contextguard.repository_source import open_repository
 from contextguard.review_workflow import (
     prepare_review_request,
@@ -57,6 +58,39 @@ def _make_finding(args: argparse.Namespace) -> ReviewFinding:
     )
 
 
+def _add_context_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add options controlling retrieved repository context."""
+    parser.add_argument("--query", help="Optional context-retrieval query")
+    parser.add_argument("--top-k", type=int, default=5)
+    parser.add_argument("--window", type=int, default=3)
+    parser.add_argument("--max-characters", type=int, default=8000)
+
+
+def _print_result(result) -> None:
+    """Print a verification result as JSON."""
+    output = {
+        "status": result.status.value,
+        "actionable": result.is_actionable(),
+        "reason": result.reason,
+        "finding": {
+            "title": result.finding.title,
+            "file_path": result.finding.file_path,
+            "confidence": result.finding.confidence,
+        },
+        "evidence_references": [
+            {
+                "file_path": reference.file_path,
+                "start_line": reference.start_line,
+                "end_line": reference.end_line,
+                "excerpt": reference.excerpt,
+                "explanation": reference.explanation,
+            }
+            for reference in result.evidence_references
+        ],
+    }
+    print(json.dumps(output, indent=2))
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Create the command-line argument parser."""
     parser = argparse.ArgumentParser(
@@ -67,17 +101,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     prepare_parser = commands.add_parser(
         "prepare",
-        help="Build a review prompt using local repository context",
+        help="Build a review prompt using repository context",
     )
     prepare_parser.add_argument(
         "--repository",
         required=True,
         help="Local repository path or public HTTPS GitHub URL",
     )
-    prepare_parser.add_argument("--query", help="Optional context-retrieval query")
-    prepare_parser.add_argument("--top-k", type=int, default=5)
-    prepare_parser.add_argument("--window", type=int, default=3)
-    prepare_parser.add_argument("--max-characters", type=int, default=8000)
+    _add_context_arguments(prepare_parser)
     _add_finding_arguments(prepare_parser)
 
     verify_parser = commands.add_parser(
@@ -96,6 +127,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_finding_arguments(verify_parser)
 
+    review_parser = commands.add_parser(
+        "review",
+        help="Generate an AI review and verify its source evidence",
+    )
+    review_parser.add_argument(
+        "--repository",
+        required=True,
+        help="Local repository path or public HTTPS GitHub URL",
+    )
+    review_parser.add_argument(
+        "--model",
+        help="Groq model name (defaults to GROQ_MODEL or the configured default)",
+    )
+    _add_context_arguments(review_parser)
+    _add_finding_arguments(review_parser)
+
     return parser
 
 
@@ -108,7 +155,7 @@ def main(argv: list[str] | None = None) -> int:
         finding = _make_finding(args)
 
         with open_repository(args.repository) as repository_root:
-            if args.command == "prepare":
+            if args.command in {"prepare", "review"}:
                 request = prepare_review_request(
                     repository_root=repository_root,
                     finding=finding,
@@ -117,38 +164,26 @@ def main(argv: list[str] | None = None) -> int:
                     window=args.window,
                     max_characters=args.max_characters,
                 )
-                print(request.prompt)
-                return 0
 
-            response_path = Path(args.response_file)
-            raw_response = response_path.read_text(encoding="utf-8")
+                if args.command == "prepare":
+                    print(request.prompt)
+                    return 0
+
+                # This is the only CLI path that calls the external LLM.
+                raw_response = generate_review_response(
+                    request.prompt,
+                    model=args.model,
+                )
+            else:
+                response_path = Path(args.response_file)
+                raw_response = response_path.read_text(encoding="utf-8")
+
             result = process_review_response(
                 repository_root=repository_root,
                 finding=finding,
                 raw_response=raw_response,
             )
-
-            output = {
-                "status": result.status.value,
-                "actionable": result.is_actionable(),
-                "reason": result.reason,
-                "finding": {
-                    "title": result.finding.title,
-                    "file_path": result.finding.file_path,
-                    "confidence": result.finding.confidence,
-                },
-                "evidence_references": [
-                    {
-                        "file_path": reference.file_path,
-                        "start_line": reference.start_line,
-                        "end_line": reference.end_line,
-                        "excerpt": reference.excerpt,
-                        "explanation": reference.explanation,
-                    }
-                    for reference in result.evidence_references
-                ],
-            }
-            print(json.dumps(output, indent=2))
+            _print_result(result)
             return 0
 
     except (OSError, ValueError, RuntimeError) as exc:
