@@ -5,17 +5,28 @@ import json
 import sys
 from pathlib import Path
 
-from contextguard.llm import generate_review_response
+from contextguard.engine import DEFAULT_CONFIDENCE_THRESHOLD, verify_finding
+from contextguard.llm import generate_review_response, generate_scan_response
 from contextguard.repository_source import open_repository
+from contextguard.review_context import build_review_context
+from contextguard.review_prompt import build_review_prompt
 from contextguard.review_workflow import (
     prepare_review_request,
     process_review_response,
 )
+from contextguard.scan_prompt import build_scan_prompt
+from contextguard.scan_response import parse_scan_response
 from contextguard.schemas import ReviewFinding
 
 
+DEFAULT_SCAN_QUERY = (
+    "bug defect security correctness error handling authorization "
+    "validation edge case"
+)
+
+
 def _add_finding_arguments(parser: argparse.ArgumentParser) -> None:
-    """Add arguments shared by review commands."""
+    """Add arguments shared by individual-finding commands."""
     parser.add_argument("--title", required=True, help="Candidate finding title")
     parser.add_argument(
         "--description",
@@ -27,18 +38,8 @@ def _add_finding_arguments(parser: argparse.ArgumentParser) -> None:
         required=True,
         help="Repository-relative file path",
     )
-    parser.add_argument(
-        "--line",
-        type=int,
-        default=None,
-        help="Suspected issue line number",
-    )
-    parser.add_argument(
-        "--confidence",
-        type=float,
-        default=0.0,
-        help="Initial reported confidence, from 0.0 to 1.0",
-    )
+    parser.add_argument("--line", type=int, default=None)
+    parser.add_argument("--confidence", type=float, default=0.0)
 
 
 def _make_finding(args: argparse.Namespace) -> ReviewFinding:
@@ -66,8 +67,29 @@ def _add_context_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--max-characters", type=int, default=8000)
 
 
+def _add_model_argument(parser: argparse.ArgumentParser) -> None:
+    """Add options for the optional LLM provider."""
+    parser.add_argument("--model", help="Groq model name")
+    parser.add_argument(
+        "--debug-response",
+        action="store_true",
+        help="Print raw model JSON to stderr for troubleshooting",
+    )
+
+
+def _reference_dict(reference) -> dict:
+    """Convert a validated evidence reference to JSON-compatible data."""
+    return {
+        "file_path": reference.file_path,
+        "start_line": reference.start_line,
+        "end_line": reference.end_line,
+        "excerpt": reference.excerpt,
+        "explanation": reference.explanation,
+    }
+
+
 def _print_result(result) -> None:
-    """Print a verification result as JSON."""
+    """Print an individual-finding verification result as JSON."""
     output = {
         "status": result.status.value,
         "actionable": result.is_actionable(),
@@ -78,13 +100,7 @@ def _print_result(result) -> None:
             "confidence": result.finding.confidence,
         },
         "evidence_references": [
-            {
-                "file_path": reference.file_path,
-                "start_line": reference.start_line,
-                "end_line": reference.end_line,
-                "excerpt": reference.excerpt,
-                "explanation": reference.explanation,
-            }
+            _reference_dict(reference)
             for reference in result.evidence_references
         ],
     }
@@ -136,19 +152,113 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="Local repository path or public HTTPS GitHub URL",
     )
-    review_parser.add_argument(
-        "--model",
-        help="Groq model name (defaults to GROQ_MODEL or the configured default)",
-    )
-    review_parser.add_argument(
-        "--debug-response",
-        action="store_true",
-        help="Print raw model JSON to stderr for troubleshooting",
-    )
+    _add_model_argument(review_parser)
     _add_context_arguments(review_parser)
     _add_finding_arguments(review_parser)
 
+    scan_parser = commands.add_parser(
+        "scan",
+        help="Discover potential bugs in a repository automatically",
+    )
+    scan_parser.add_argument(
+        "--repository",
+        required=True,
+        help="Local repository path or public HTTPS GitHub URL",
+    )
+    _add_model_argument(scan_parser)
+    scan_parser.add_argument("--query", help="Optional retrieval query")
+    scan_parser.add_argument("--top-k", type=int, default=20)
+    scan_parser.add_argument("--window", type=int, default=2)
+    scan_parser.add_argument("--max-characters", type=int, default=16000)
+    scan_parser.add_argument(
+        "--confidence-threshold",
+        type=float,
+        default=DEFAULT_CONFIDENCE_THRESHOLD,
+        help="Minimum confidence for actionable findings (0.0 to 1.0)",
+    )
+
     return parser
+
+
+def _run_scan(args: argparse.Namespace, repository_root: Path) -> int:
+    """Generate candidate findings and validate their source evidence."""
+    if not 0.0 <= args.confidence_threshold <= 1.0:
+        raise ValueError("--confidence-threshold must be between 0.0 and 1.0")
+
+    context = build_review_context(
+        repository_root=repository_root,
+        query=args.query or DEFAULT_SCAN_QUERY,
+        top_k=args.top_k,
+        window=args.window,
+        max_characters=args.max_characters,
+    )
+
+    if not context.text.strip():
+        raise ValueError(
+            "No relevant source context was retrieved. Try another --query "
+            "or increase --top-k."
+        )
+
+    prompt = build_scan_prompt(context)
+    raw_response = generate_scan_response(prompt, model=args.model)
+
+    if args.debug_response:
+        print("Raw Groq scan response:", file=sys.stderr)
+        print(raw_response, file=sys.stderr)
+
+    parsed = parse_scan_response(raw_response)
+    results = []
+
+    for scanned_finding in parsed.findings:
+        finding = ReviewFinding(
+            title=scanned_finding.title,
+            description=scanned_finding.description,
+            file_path=scanned_finding.file_path,
+            line_number=scanned_finding.line_number,
+            confidence=scanned_finding.confidence,
+        )
+
+        verification = verify_finding(
+            finding=finding,
+            confidence_threshold=args.confidence_threshold,
+            evidence_references=list(scanned_finding.evidence_references),
+            repository_root=repository_root,
+        )
+
+        results.append(
+            {
+                "title": finding.title,
+                "description": finding.description,
+                "file_path": finding.file_path,
+                "line_number": finding.line_number,
+                "confidence": finding.confidence,
+                "status": verification.status.value,
+                "actionable": verification.is_actionable(),
+                "reason": verification.reason,
+                "evidence_references": [
+                    _reference_dict(reference)
+                    for reference in verification.evidence_references
+                ],
+            }
+        )
+
+    actionable_count = sum(item["actionable"] for item in results)
+
+    print(
+        json.dumps(
+            {
+                "repository": str(args.repository),
+                "summary": {
+                    "findings_returned": len(results),
+                    "actionable_findings": actionable_count,
+                    "uncertain_findings": len(results) - actionable_count,
+                },
+                "findings": results,
+            },
+            indent=2,
+        )
+    )
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -157,6 +267,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
+        if args.command == "scan":
+            with open_repository(args.repository) as repository_root:
+                return _run_scan(args, repository_root)
+
         finding = _make_finding(args)
 
         with open_repository(args.repository) as repository_root:
@@ -174,7 +288,6 @@ def main(argv: list[str] | None = None) -> int:
                     print(request.prompt)
                     return 0
 
-                # This is the only CLI path that calls the external LLM.
                 raw_response = generate_review_response(
                     request.prompt,
                     model=args.model,
